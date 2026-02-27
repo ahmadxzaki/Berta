@@ -59,6 +59,13 @@ void create_v1_tracker_ping_pkt(
     bufferOut[10] = cmac >> 8  & 0xFF;
     bufferOut[11] = cmac >> 16 & 0xFF;
     bufferOut[12] = cmac >> 24 & 0xFF;
+
+    printf("created packet: ");
+    for (int i = 0; i < 13; i++) {
+        // Use "%02X" for two uppercase hex digits, with leading zeros
+        printf("%02X ", bufferOut[i]);
+    }
+    printf("\n");
 }
 
 bool parse_v1_tracker_pong_pkt(

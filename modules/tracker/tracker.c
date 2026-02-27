@@ -47,14 +47,14 @@ static saml21_extwake_t extwake = EXTWAKE;
 
 #define MAX_HANDSHAKE_ATTEMPTS_BEFORE_EMERGENCY_MODE 5
 #define HANDSHAKE_BACKOFF_MIN_SECONDS 5
-#define HANDSHAKE_BACKOFF_MAX_SECONDS 20
+#define HANDSHAKE_BACKOFF_MAX_SECONDS 5
 
 #define EMERGENCY_MODE_SEND_ATTEMPTS 5
 #define EMERGENCY_MODE_SEND_ATTEMPT_BACKOFF_MIN_MS 200
 #define EMERGENCY_MODE_SEND_ATTEMPT_BACKOFF_MAX_MS 1000
 
 #define TRUCK_UNIT_REPLY_SLEEP_MS 400
-#define TRUCK_UNIT_REPLY_TIMEOUT_MS 300
+#define TRUCK_UNIT_REPLY_TIMEOUT_MS 600
 
 #define SUCCESSFUL_HANDSHAKE_SLEEP_SECONDS 10
 #define EMERGENCY_MODE_SLEEP_SECONDS 10
@@ -81,6 +81,9 @@ uint8_t pack_battery_level(int32_t battery_mv);
 static kernel_pid_t _tracker_thread_pid = KERNEL_PID_UNDEF;
 static uint8_t _rx_buffer[MAX_PACKET_LEN];
 static size_t _rx_len = 0;
+// Add this: A small mailbox so the timer interrupt can send us the timeout message
+#define TRACKER_MSG_QUEUE_SIZE 8
+static msg_t _tracker_msg_queue[TRACKER_MSG_QUEUE_SIZE];
 
 bool tracker_init(void) {
     bool sucessfully_initialized_storage = storage_init();
@@ -100,19 +103,23 @@ bool tracker_init(void) {
         return false;
     }
 
+    printf("initialized tracker\n");
     return tracker_wakeup();
 }
 
 bool tracker_wakeup(void) {
+    printf("waking up tracker\n");
+    msg_init_queue(_tracker_msg_queue, TRACKER_MSG_QUEUE_SIZE);
+
     bool sucessfully_initialized_storage = storage_init();
     if (!sucessfully_initialized_storage) {
-        printf("failed to initialize storage");
+        printf("failed to initialize storage\n");
         return false;
     }
 
-    bool sucessfully_initialized_battery_adc = adc_init(ADC_VCC);
-    if (!sucessfully_initialized_battery_adc) {
-        printf("failed to initialize battery voltage adc");
+    int adc_init_result = adc_init(ADC_VCC);
+    if (adc_init_result != 0) {
+        printf("failed to initialize battery voltage adc\n");
         return false;
     }
     
@@ -122,6 +129,7 @@ bool tracker_wakeup(void) {
         printf("failed to load state\n");
         return false;
     }
+    printf("loaded state: emerg_mode: %d, counter: %ld, missed_reply: %d\n", state.in_emergency_mode, state.counter, state.missed_truck_reply_count);
 
     if (state.in_emergency_mode) {
         bool handled_emergency_mode = handle_emergency_mode(&state);
@@ -141,12 +149,15 @@ bool tracker_wakeup(void) {
 }
 
 bool handle_emergency_mode(tracker_state_t *state) {
+    printf("handling emergency mode\n");
     bool sent_emergency_ping = send_emergency_ping(state);
     if (!sent_emergency_ping) {
         printf("failed to send emergency ping\n");
     }
 
+    printf("trying to do handshake to recover from emergency mode\n");
     bool handshake_successful = truck_unit_handshake(state);
+    printf("did handshake to try to recover\n");
     if (handshake_successful) {
 
         state->missed_truck_reply_count = 0;
@@ -156,16 +167,21 @@ bool handle_emergency_mode(tracker_state_t *state) {
             printf("failed to back up state when recovering from emergency mode");
         }
 
+        
+        printf("successful handshake, sleeping for %d\n", EMERGENCY_MODE_SLEEP_SECONDS);
         saml21_backup_mode_enter(1, extwake, SUCCESSFUL_HANDSHAKE_SLEEP_SECONDS, 1);
         return true;
     }
 
+    printf("failed recovery handshake, sleeping for %d\n", EMERGENCY_MODE_SLEEP_SECONDS);
     saml21_backup_mode_enter(1, extwake, EMERGENCY_MODE_SLEEP_SECONDS, 1);
     return true;
 } 
 
 bool handle_truck_mode(tracker_state_t *state) {
+    printf("handling truck mode\n");
     bool handshake_successful = truck_unit_handshake(state);
+    printf("did truck mode handshake\n");
     if (!handshake_successful) {
 
         state->missed_truck_reply_count++;
@@ -176,8 +192,10 @@ bool handle_truck_mode(tracker_state_t *state) {
         if (!did_back_up_state) {
             printf("failed to back up state after failed truck mode handshake\n");
         }
-
+        
         uint32_t handshake_backoff_seconds = random_between(HANDSHAKE_BACKOFF_MIN_SECONDS, HANDSHAKE_BACKOFF_MAX_SECONDS);
+
+        printf("failed handshake, sleeping for %ld seconds\n", handshake_backoff_seconds);
         saml21_backup_mode_enter(1, extwake, handshake_backoff_seconds, 1);
         return false;
     }
@@ -188,9 +206,10 @@ bool handle_truck_mode(tracker_state_t *state) {
         printf("failed to back up state after successful truck mode handshake\n");
     }
 
+    printf("successful handshake, sleeping for %d seconds\n", SUCCESSFUL_HANDSHAKE_SLEEP_SECONDS);
     saml21_backup_mode_enter(1, extwake, SUCCESSFUL_HANDSHAKE_SLEEP_SECONDS, 1);
     return true;
-} 
+}
 
 
 bool truck_unit_handshake(tracker_state_t *state) {
@@ -211,9 +230,9 @@ bool truck_unit_handshake(tracker_state_t *state) {
     handshake_lora.boost            = false;
     handshake_lora.data_cb = (lora_data_cb_t *)tracker_lora_rx_cb;
 
-    
     bool sucessfully_sent_truck_ping = false;
     for (int send_attempt = 0; send_attempt < TRUCK_MODE_SEND_ATTEMPTS; send_attempt++) {
+        printf("attempt %d sending ping to truck unit\n", send_attempt);
         int lora_init_result = lora_init(&handshake_lora);
         if (lora_init_result != 0) {
             printf("lora_init failed: %d\n", lora_init_result);
@@ -237,13 +256,26 @@ bool truck_unit_handshake(tracker_state_t *state) {
         printf("ran out of attempts to send truck ping\n");
         return false;
     }
+    printf("sent truck ping\n");
     
     // sleep
     ztimer_sleep(ZTIMER_MSEC, TRUCK_UNIT_REPLY_SLEEP_MS);
 
+    int lora_wake_result = lora_init(&handshake_lora);
+    if (lora_wake_result != 0) {
+        printf("failed to wake radio for listening\n");
+        return false;
+    }
     int rx_len = wait_for_pong(TRUCK_UNIT_REPLY_TIMEOUT_MS);
+    printf("waited for truck pong\n");
     if (rx_len < 0) {
         printf("timed out when waiting for truck unit reply\n");
+        return false;
+    }
+    lora_off();
+
+    if (rx_len != 9) {
+        printf("invalid received packet length\n");
         return false;
     }
 
@@ -269,7 +301,7 @@ bool truck_unit_handshake(tracker_state_t *state) {
         return false;
     }
 
-    printf("received command byte: %x", cmd);
+    printf("received pong with command byte: %x\n", cmd);
 
     return true;
 }
@@ -288,11 +320,9 @@ bool send_emergency_ping(tracker_state_t* state) {
     emergency_lora.spreading_factor = LORA_SF12;
     emergency_lora.coderate         = LORA_CR_4_8;
     emergency_lora.channel          = 915000000;
-    emergency_lora.power            = 20; // dBm (ambitious lol)
+    emergency_lora.power            = 8; // dBm
     emergency_lora.boost            = true;
     emergency_lora.data_cb          = (lora_data_cb_t *)tracker_lora_rx_cb;
-
-    
 
     bool sucessfully_sent_truck_ping = false;
     for (int send_attempt = 0; send_attempt < EMERGENCY_MODE_SEND_ATTEMPTS; send_attempt++) {
@@ -318,11 +348,7 @@ bool send_emergency_ping(tracker_state_t* state) {
         printf("ran out of attempts to send emergency ping\n");
         return false;
     }
-    
-    bool handshake_successful = truck_unit_handshake(state);
-    if (handshake_successful) {
-        state->in_emergency_mode = false;
-    }
+    printf("sent emergency mode ping\n");
 
     return true;
 }
@@ -373,6 +399,9 @@ bool send_ping(uint8_t* ping_pkt_payload, size_t len) {
 }
 
 uint32_t random_between(uint32_t lower, uint32_t upper) {
+    if (lower == upper) {
+        return lower;
+    }
     return random_uint32() % (upper - lower) + lower;
 }
 
@@ -441,7 +470,7 @@ int wait_for_pong(uint32_t timeout_ms) {
     _rx_len = 0;
     
     // 2. Command the Semtech radio to do a Single RX 
-    lora_listen_single(); 
+    lora_listen(); 
     
     msg_t msg;
     

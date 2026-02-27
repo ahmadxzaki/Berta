@@ -15,6 +15,7 @@ static saml21_extwake_t extwake = EXTWAKE;
 
 int main(void)
 {
+    
     switch (saml21_wakeup_cause()) {
     case BACKUP_EXTWAKE:
         printf("tracker woken up by button\n");
@@ -36,7 +37,7 @@ int main(void)
         break;
     }
 
-    printf("tracker initialization failed");
+    printf("tracker initialization failed\n");
     saml21_backup_mode_enter(0, extwake, INIT_FAILURE_BACKOFF_SECONDS, 1);
     return 0;
 }
