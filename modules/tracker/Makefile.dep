@@ -1,0 +1,6 @@
+ifneq (,$(filter tracker,$(USEMODULE)))
+  FEATURES_REQUIRED += periph_cpuid
+  FEATURES_REQUIRED += periph_adc
+  USEMODULE += message_encoding
+  USEMODULE += acme_lora
+endif

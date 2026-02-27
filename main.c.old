@@ -1,0 +1,93 @@
+#include <string.h>
+#include <stdio.h>
+#include <stdint.h>
+#include "acme_lora.h"
+#include "iolist.h"
+#include "xtimer.h"
+#include "periph/cpuid.h"
+
+// RIOT Software Crypto Headers
+#include "crypto/ciphers.h"
+#include "crypto/modes/ctr.h"
+
+// 128-bit Pre-shared Key (In production, use the Handshake method from before to set this)
+static const uint8_t SECRET_KEY[16] = {
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+    0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F
+};
+
+int main(void)
+{
+    xtimer_sleep(5);
+    
+    printf("INIT\n");
+    // CPUID_LEN is automatically defined by RIOT for your specific hardware
+    uint8_t id[CPUID_LEN]; 
+    
+    // This fetches the factory-burned serial number
+    cpuid_get(id);
+
+    printf("Board Unique ID: ");
+    for (unsigned int i = 0; i < CPUID_LEN; i++) {
+        printf("%02x", id[i]);
+    }
+    printf("\n");
+
+    lora_state_t lora = {0};
+
+    // Hardcoded gateway parameters
+    lora.bandwidth        = 125;          /* kHz */
+    lora.spreading_factor = 12;           /* SF12 */
+    lora.coderate         = 4;            /* 4/8 */
+    lora.channel          = 915000000;    /* Hz */
+    lora.power            = 8;            /* dBm */
+    lora.boost            = 1;
+
+    if (lora_init(&lora) != 0) {
+        printf("LoRa Init Failed\n");
+        return 1;
+    }
+
+    uint32_t counter = 0;
+    uint8_t payload[4 + CPUID_LEN];
+
+    xtimer_sleep(1);
+
+    printf("ENTERING LOOP\n");
+
+    while (true) {
+        printf("Sending counter: %lu\n", (unsigned long)counter);
+
+        // 1. Load Counter (Little Endian)
+        payload[0] = (uint8_t)(counter >> 0);
+        payload[1] = (uint8_t)(counter >> 8);
+        payload[2] = (uint8_t)(counter >> 16);
+        payload[3] = (uint8_t)(counter >> 24);
+
+        // 2. Load Unique ID after the counter (Optional: if you want to transmit it)
+        memcpy(&payload[4], id, CPUID_LEN);
+
+        iolist_t iov = {
+            .iol_base = payload,
+            .iol_len  = sizeof(payload), // Send full buffer
+            .iol_next = NULL
+        };
+
+        int res = lora_write(&iov);
+
+        if (res < 0) {
+            printf("TX FAILED (Error: %d)\n", res);
+            printf("Attempting driver reset...\n");
+            lora_init(&lora);
+            xtimer_usleep(10000);
+        } 
+        else {
+            printf("TX OK\n");
+        }
+        counter++;  
+
+        xtimer_sleep(2);
+    }
+
+    return 0;
+}

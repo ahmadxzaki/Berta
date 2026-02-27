@@ -1,47 +1,42 @@
-#include <string.h>
 #include <stdio.h>
-#include "acme_lora.h"
-#include "iolist.h"
-#include "xtimer.h"
 
-// payload
-static const uint8_t payload[] = "Hello from BertaH10 fast prototyping system";
+#include "tracker.h"
+#include "saml21_backup_mode.h"
+
+#define INIT_FAILURE_BACKOFF_SECONDS 5
+#define FW_VERSION "1.0.0"
+
+#define EXTWAKE \
+    { .pin = EXTWAKE_PIN6, \
+      .polarity = EXTWAKE_HIGH, \
+      .flags = EXTWAKE_IN_PU \
+    }
+static saml21_extwake_t extwake = EXTWAKE;
 
 int main(void)
 {
-    lora_state_t lora = {0};
+    switch (saml21_wakeup_cause()) {
+    case BACKUP_EXTWAKE:
+        printf("tracker woken up by button\n");
+        tracker_wakeup();
+        break;
+    case BACKUP_RTC:
+        tracker_wakeup();
+        break;
+    default:
+        printf("\n");
+        printf("-------------------------------------\n");
+        printf("-      elec398 capstone group 1      -\n");
+        printf("-  Version  : %s              -\n", FW_VERSION);
+        printf("-  Compiled : %s %s  -\n", __DATE__, __TIME__);
+        printf("-------------------------------------\n");
+        printf("\n");
 
-    // Hardcoded gateway parameters
-    lora.bandwidth        = 125;          /* kHz */
-    lora.spreading_factor = 7;            /* SF7 */
-    lora.coderate         = 5;            /* 4/5 */
-    lora.channel          = 915000000;    /* Hz */
-    lora.power            = 14;           /* dBm */
-
-    printf("INIT\n");
-
-    if (lora_init(&lora) != 0) {
-        return 1;
+        tracker_init();
+        break;
     }
 
-    // send message
-    iolist_t iov = {
-        .iol_base = (void*)payload,
-        .iol_len  = sizeof(payload) - 1,
-        .iol_next = NULL
-    };
-    
-    xtimer_sleep(1);
-
-    printf("ENTERING\n");
-
-    for (int i = 0; i < 1000; i++) {
-    // while(1) {
-        printf("hi\n");
-        (void)lora_write(&iov);
-        xtimer_sleep(2);   /* wait 2 seconds between transmissions */
-    }
-
+    printf("tracker initialization failed");
+    saml21_backup_mode_enter(0, extwake, INIT_FAILURE_BACKOFF_SECONDS, 1);
     return 0;
 }
-

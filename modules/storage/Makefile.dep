@@ -1,0 +1,3 @@
+ifneq (,$(filter storage,$(USEMODULE)))
+  USEMODULE += fram
+endif

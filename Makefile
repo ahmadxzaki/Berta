@@ -1,54 +1,66 @@
 APPLICATION = sensor-node
 BOARD ?= berta-h10
-BASE ?= $(CURDIR)/../../..
-LORA3ABASE ?= $(BASE)/lora3a-boards
+BASE ?= /home/dav/lora3a-projects
 RIOTBASE ?= $(BASE)/RIOT
-EXTERNAL_BOARD_DIRS=$(LORA3ABASE)/boards
-EXTERNAL_MODULE_DIRS=$(LORA3ABASE)/modules
-EXTERNAL_PKG_DIRS=$(LORA3ABASE)/pkg
+LORA3ABASE ?= $(BASE)/lora3a-boards
+
+# TRACKER IDENTITY!!!!!
+TRACKER_ID ?= 123456
+TRACKER_KEY ?= 0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xAA,0xBB,0xCC,0xDD,0xEE,0xFF
+CFLAGS += -DCONFIG_TRACKER_ID=$(TRACKER_ID)
+CFLAGS += -DCONFIG_TRACKER_KEY="$(TRACKER_KEY)"
+# ------
+
+# --- External Paths ---
+EXTERNAL_BOARD_DIRS  = $(LORA3ABASE)/boards
+EXTERNAL_PKG_DIRS    = $(LORA3ABASE)/pkg
+# Combine external modules and your local modules
+EXTERNAL_MODULE_DIRS = $(LORA3ABASE)/modules $(CURDIR)/modules
+
+# --- Build Config ---
 DEVELHELP ?= 1
 QUIET ?= 1
-PORT ?= /dev/ttyUSB0
+PORT ?= /dev/ttyACM0
 
-USEMODULE += fmt
-USEMODULE += hdc3020
-USEMODULE += periph_adc
-USEMODULE += periph_cpuid
-USEMODULE += periph_spi_reconfigure
-USEMODULE += printf_float
-USEMODULE += saml21_backup_mode
-USEMODULE += stdio_uart
+# --- Hardware Features ---
+FEATURES_REQUIRED += periph_cpuid
+FEATURES_REQUIRED += periph_adc
+FEATURES_REQUIRED += periph_spi_reconfigure
+FEATURES_REQUIRED += periph_wdt
+FEATURES_REQUIRED += periph_hwrng
+
+USEMODULE += auto_init_random
+USEMODULE += random
+
+# --- System & Drivers ---
 USEMODULE += xtimer
 USEMODULE += ztimer
 USEMODULE += ztimer_msec
-
+USEMODULE += stdio_uart
+USEMODULE += fmt
+USEMODULE += printf_float
 USEMODULE += acme_lora
 
-ifneq ($(BW),)
-	CFLAGS+=-DDEFAULT_LORA_BANDWIDTH=$(BW)
-endif
+USEMODULE += saml21_backup_mode
+USEMODULE += fram
 
-ifneq ($(SF),)
-	CFLAGS+=-DDEFAULT_LORA_SPREADING_FACTOR=$(SF)
-endif
+# --- Crypto (Software Optimized) ---
+USEMODULE += crypto
+USEMODULE += crypto_aes_128
+USEMODULE += hashes
 
-ifneq ($(CR),)
-	CFLAGS+=-DDEFAULT_LORA_CODERATE=$(CR)
-endif
+# --- Your Application Modules ---
+USEMODULE += tracker
+USEMODULE += storage
+USEMODULE += message_encoding
 
-ifneq ($(CH),)
-	CFLAGS+=-DDEFAULT_LORA_CHANNEL=$(CH)
-endif
-
-ifneq ($(PW),)
-	CFLAGS+=-DDEFAULT_LORA_POWER=$(PW)
-endif
-
+# --- Configuration ---
+# Only keep the region and timeout, as you set BW/SF/Freq in C code
 CFLAGS += -DLORA_REGION_US915
-CFLAGS += -DDEFAULT_LORA_BOOST=SX127X_PA_BOOST
-CFLAGS += -DLOG_LEVEL=LOG_DEBUG -DSX127X_DEBUG=1
-# allow long packets plenty of time
 CFLAGS += -DSX127X_TX_TIMEOUT_MS=8000
+
+# Debugging (Comment these out for final production build to save space)
+CFLAGS += -DLOG_LEVEL=LOG_DEBUG -DSX127X_DEBUG=1
 
 include $(RIOTBASE)/Makefile.include
 include $(LORA3ABASE)/Makefile.include

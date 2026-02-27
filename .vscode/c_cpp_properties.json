@@ -1,0 +1,22 @@
+{
+    "configurations": [
+        {
+            "name": "RIOT WSL",
+            "compilerPath": "/usr/bin/gcc",
+            "compileCommands": "${workspaceFolder}/compile_commands.json",
+            "intelliSenseMode": "linux-gcc-x64",
+            "cStandard": "c11",
+            "cppStandard": "c++17"
+        }
+        
+        // {
+        //     "name": "RIOT WSL TEST",
+        //     "compilerPath": "/usr/bin/gcc",
+        //     "compileCommands": "${workspaceFolder}/tests/compile_commands.json",
+        //     "intelliSenseMode": "linux-gcc-x64",
+        //     "cStandard": "c11",
+        //     "cppStandard": "c++17"
+        // }
+    ],
+    "version": 4
+}

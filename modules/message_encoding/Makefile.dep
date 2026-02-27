@@ -1,0 +1,4 @@
+ifneq (,$(filter message_encoding,$(USEMODULE)))
+  USEMODULE += crypto
+  USEMODULE += hashes
+endif
